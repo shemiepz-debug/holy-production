@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -25,13 +25,15 @@
   .btn.sm { padding: 6px 10px; font-size: 13px; width: auto; }
   .btn.alt { background: transparent; color: var(--ink); border: 1px solid var(--line); }
   .btn.danger { background: var(--badbg); color: var(--bad); border: 0; padding: 6px 10px; width: auto; }
-  .item-row { display: grid; grid-template-columns: 2fr 1fr 0.8fr auto; gap: 6px; align-items: center; margin-bottom: 8px; }
+  .item-row { display: grid; grid-template-columns: 2fr 1fr 0.85fr auto; gap: 6px; align-items: center; margin-bottom: 8px; }
   .item-row input, .item-row select { margin-bottom: 0; padding: 8px; font-size: 14px; }
   .alert { padding: 10px 12px; border-radius: 6px; font-size: 13.5px; margin-bottom: 12px; }
   .alert.ok { background: var(--okbg); color: var(--ok); }
   .alert.bad { background: var(--badbg); color: var(--bad); }
   .hide { display: none !important; }
   .meta { font-size: 12.5px; color: var(--muted); }
+  .conv-bar { background: #f4f8fa; border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; margin-bottom: 10px; font-size: 12.5px; color: var(--brand); display: flex; gap: 6px; align-items: center; }
+  .conv-bar input, .conv-bar select { margin: 0; padding: 5px 7px; font-size: 13px; width: auto; }
 </style>
 </head>
 <body>
@@ -90,7 +92,7 @@
     <div class="card">
       <h3>
         <span>1. Produced Items (ഉണ്ടാക്കിയവ)</span>
-        <button class="btn sm alt" type="button" onclick="addRow('prodList')">+ Add</button>
+        <button class="btn sm alt" type="button" onclick="addRow('prodList', '', '', 'pcs')">+ Add</button>
       </h3>
       <div id="prodList"></div>
     </div>
@@ -99,8 +101,16 @@
     <div class="card">
       <h3>
         <span>2. Raw Materials Used (ഉപയോഗിച്ചവ)</span>
-        <button class="btn sm alt" type="button" onclick="addRow('rawList')">+ Add</button>
+        <button class="btn sm alt" type="button" onclick="addRow('rawList', '', '', 'kg')">+ Add</button>
       </h3>
+      <div class="conv-bar">
+        <input id="qConvVal" type="number" step="any" placeholder="g/kg" style="width:72px" oninput="runQuickConv()">
+        <select id="qConvDir" onchange="runQuickConv()">
+          <option value="g2kg">g &rarr; kg</option>
+          <option value="kg2g">kg &rarr; g</option>
+        </select>
+        <strong id="qConvRes" style="margin-left:auto">= —</strong>
+      </div>
       <div id="rawList"></div>
     </div>
 
@@ -118,7 +128,55 @@
   </div>
 </div>
 
+<!-- Preloaded Basic Raw Materials Datalist -->
+<datalist id="rawMaterialsDatalist">
+  <option value="Maida (All-Purpose Flour)">
+  <option value="Besan (Gram Flour)">
+  <option value="Atta (Wheat Flour)">
+  <option value="Sugar">
+  <option value="Peanut">
+  <option value="White Rice">
+  <option value="Basmati Rice">
+  <option value="Rice Flour">
+  <option value="Egg">
+  <option value="Milk Powder">
+  <option value="Cooking Oil">
+  <option value="Butter">
+  <option value="Food Color - Yellow">
+  <option value="Food Color - Red">
+  <option value="Food Color - Green">
+  <option value="Food Color - Orange">
+  <option value="Salt">
+  <option value="Ghee">
+  <option value="Corn Flour">
+  <option value="Baking Powder">
+  <option value="Yeast">
+  <option value="Vanilla Essence">
+  <option value="Cardamom (Elaichi)">
+  <option value="Samosa Sheet">
+  <option value="Cheese">
+</datalist>
+
 <script>
+
+const DEFAULT_RAW_MATERIALS = [
+  'Maida (All-Purpose Flour)', 'Besan (Gram Flour)', 'Atta (Wheat Flour)', 'Sugar',
+  'Peanut', 'White Rice', 'Basmati Rice', 'Rice Flour', 'Egg', 'Milk Powder',
+  'Cooking Oil', 'Butter', 'Food Color - Yellow', 'Food Color - Red',
+  'Food Color - Green', 'Food Color - Orange', 'Salt', 'Ghee', 'Corn Flour',
+  'Baking Powder', 'Yeast', 'Vanilla Essence', 'Cardamom (Elaichi)',
+  'Samosa Sheet', 'Cheese'
+];
+const DEFAULT_FINISHED_GOODS = [
+  'Cheese Samosa', 'Veg Samosa', 'Chicken Samosa', 'Onion Samosa',
+  'Laddu', 'Mysore Pak', 'Jalebi', 'Gulab Jamun', 'Halwa',
+  'Banana Chips', 'Mixture', 'Murukku', 'Pakora', 'Puff', 'Bread / Bun'
+];
+const DEFAULT_OUTPUT_ITEMS = [
+  'Cheese Samosa (Batch Output)', 'Veg Samosa (Batch Output)', 'Sweets Output',
+  'Snacks Output', 'Bakery Output', 'Wastage / Scrap'
+];
+
 const SERVER_URL = 'https://brach-ops-production.up.railway.app';
 const ACCESS_KEY = '123123';
 const LS_SESS = 'bo_staff_app_sess';
@@ -133,6 +191,14 @@ function showMsg(txt, type='ok') {
   b.className = 'alert ' + type;
   b.classList.remove('hide');
   setTimeout(() => b.classList.add('hide'), 4500);
+}
+
+function runQuickConv() {
+  const v = parseFloat(document.getElementById('qConvVal').value);
+  const d = document.getElementById('qConvDir').value;
+  const out = document.getElementById('qConvRes');
+  if (isNaN(v)) { out.textContent = '= —'; return; }
+  out.textContent = d === 'g2kg' ? `= ${Number((v/1000).toFixed(3))} kg` : `= ${Number((v*1000).toFixed(1))} g`;
 }
 
 async function fetchServerState() {
@@ -193,14 +259,17 @@ function logout() {
 function addRow(containerId, name='', qty='', unit='pcs') {
   const div = document.createElement('div');
   div.className = 'item-row';
+  const listAttr = containerId === 'rawList' ? 'list="rawMaterialsDatalist"' : '';
+  const placeholder = containerId === 'rawList' ? 'Maida, Sugar, Oil...' : 'Item name';
   div.innerHTML = `
-    <input type="text" placeholder="Item name" value="${name.replace(/"/g,'&quot;')}" class="i-name">
+    <input type="text" ${listAttr} placeholder="${placeholder}" value="${name.replace(/"/g,'&quot;')}" class="i-name">
     <input type="number" step="any" min="0" placeholder="Qty" value="${qty}" class="i-qty">
     <select class="i-unit">
       <option value="pcs" ${unit==='pcs'?'selected':''}>pcs</option>
       <option value="kg" ${unit==='kg'?'selected':''}>kg</option>
       <option value="g" ${unit==='g'?'selected':''}>g</option>
       <option value="L" ${unit==='L'?'selected':''}>L</option>
+      <option value="ml" ${unit==='ml'?'selected':''}>ml</option>
       <option value="pkt" ${unit==='pkt'?'selected':''}>pkt</option>
       <option value="box" ${unit==='box'?'selected':''}>box</option>
     </select>
@@ -245,7 +314,8 @@ function loadDateOrTemplate() {
     document.getElementById('inNotes').value = '';
     document.getElementById('autoFillNote').classList.remove('hide');
   } else {
-    addRow('prodList'); addRow('rawList');
+    addRow('prodList', '', '', 'pcs');
+    addRow('rawList', '', '', 'kg');
   }
 
   const hist = document.getElementById('historyList');
@@ -323,7 +393,6 @@ async function openApp() {
   loadDateOrTemplate();
 }
 
-// Auto-resume saved staff session
 (async function init() {
   const saved = localStorage.getItem(LS_SESS);
   if (saved) {
@@ -335,5 +404,8 @@ async function openApp() {
   }
 })();
 </script>
+<script>document.addEventListener('DOMContentLoaded',()=>{const d=document.createElement('div');d.innerHTML=`<datalist id="rawMatList">${DEFAULT_RAW_MATERIALS.map(x=>`<option value="${x}">`).join('')}</datalist>
+<datalist id="finGoodList">${DEFAULT_FINISHED_GOODS.map(x=>`<option value="${x}">`).join('')}</datalist>
+<datalist id="outItemList">${DEFAULT_OUTPUT_ITEMS.map(x=>`<option value="${x}">`).join('')}</datalist>`;document.body.appendChild(d);});</script>
 </body>
 </html>
