@@ -1,4 +1,4 @@
-!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -41,13 +41,24 @@
 <header>
   <div>
     <h1>Production Entry</h1>
-    <div id="hdrSub" class="meta" style="color:rgba(255,255,255,0.8)">Branch Ops Staff App</div>
+    <div id="hdrSub" class="meta" style="color:rgba(255,255,255,0.8)">Staff App · v<span id="lblAppVer">1.2.0</span></div>
   </div>
-  <button id="btnLogout" class="btn sm alt hide" style="color:#fff;border-color:rgba(255,255,255,0.4)" onclick="logout()">Logout</button>
+  <div style="display:flex;gap:6px;align-items:center">
+    <button id="btnCheckUpd" class="btn sm alt" type="button" style="color:#fff;border-color:rgba(255,255,255,0.4)" onclick="checkForAppUpdate()">Check for Update</button>
+    <button id="btnLogout" class="btn sm alt hide" style="color:#fff;border-color:rgba(255,255,255,0.4)" onclick="logout()">Logout</button>
+  </div>
 </header>
 
 <div class="wrap">
   <div id="msgBox" class="alert hide"></div>
+  <div id="updCard" class="card hide" style="border-color:var(--brand);background:#f0f8fa">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+      <b id="updTitle">Update Status</b>
+      <button class="btn sm alt" type="button" onclick="document.getElementById('updCard').classList.add('hide')">×</button>
+    </div>
+    <div id="updBody" class="meta" style="margin:6px 0"></div>
+    <div id="updActions"></div>
+  </div>
 
   <!-- LOGIN VIEW (Auto-connected to Railway) -->
   <div id="viewLogin" class="card">
@@ -97,27 +108,23 @@
       <div id="prodList"></div>
     </div>
 
-    <!-- RAW MATERIALS USED -->
-    <div class="card">
-      <h3>
-        <span>2. Raw Materials Used (ഉപയോഗിച്ചവ)</span>
-        <button class="btn sm alt" type="button" onclick="addRow('rawList', '', '', 'kg')">+ Add</button>
-      </h3>
-      <div class="conv-bar">
-        <input id="qConvVal" type="number" step="any" placeholder="g/kg" style="width:72px" oninput="runQuickConv()">
-        <select id="qConvDir" onchange="runQuickConv()">
-          <option value="g2kg">g &rarr; kg</option>
-          <option value="kg2g">kg &rarr; g</option>
-        </select>
-        <strong id="qConvRes" style="margin-left:auto">= —</strong>
-      </div>
-      <div id="rawList"></div>
+    <!-- AUTO RAW MATERIAL PREVIEW FROM RECIPE -->
+    <div class="card" id="recipeCalcCard" style="background:#f4f8fa">
+      <h3 style="margin-bottom:6px"><span>Auto Raw Materials (Recipe &times; Output)</span></h3>
+      <div id="recipeCalcPreview" class="meta">Select an output item and enter quantity to see auto raw materials.</div>
     </div>
 
     <div class="card">
       <label>Notes (Optional)</label>
       <input id="inNotes" type="text" placeholder="Any remarks or wastage notes...">
-      <button class="btn" id="btnSubmit" onclick="submitProduction()">Submit Today's Production</button>
+      <button class="btn" id="btnSubmit" onclick="submitProduction()">Submit &amp; Sync Now</button>
+      <button class="btn alt" id="btnSaveQueue" type="button" style="margin-top:8px" onclick="saveToLocalQueueOnly()">Save Locally (Upload Later)</button>
+    </div>
+
+    <div class="card hide" id="queueBox" style="background:#fff8eb;border-color:#e5b567">
+      <h3><span>Pending Local Queue (<span id="queueCount">0</span>)</span></h3>
+      <div class="meta" style="margin-bottom:8px">Saved on phone. Upload to server when ready without constant background requests.</div>
+      <button class="btn" id="btnUploadQueue" type="button" onclick="flushPendingQueueToServer()">Upload Queue to Server</button>
     </div>
 
     <!-- RECENT SUBMISSIONS -->
@@ -179,11 +186,67 @@ const DEFAULT_OUTPUT_ITEMS = [
 
 const SERVER_URL = 'https://brach-ops-production.up.railway.app';
 const ACCESS_KEY = '123123';
+const APP_VERSION = '1.2.0';
+const UPDATE_INFO_URL = 'https://raw.githubusercontent.com/YOUR_USER/YOUR_REPO/main/staff-app-version.json';
 const LS_SESS = 'bo_staff_app_sess';
 
-let stateData = { stf: [], prodUsers: {}, prodLogs: [] };
+let stateData = { stf: [], prodUsers: {}, prodLogs: [], prodRecipes: [] };
 let stateRev = 0;
 let currentUser = null;
+
+
+function compareVer(a, b) {
+  const pa = String(a || '0').split('.').map(n => parseInt(n, 10) || 0);
+  const pb = String(b || '0').split('.').map(n => parseInt(n, 10) || 0);
+  const len = Math.max(pa.length, pb.length);
+  for (let i = 0; i < len; i++) {
+    const x = pa[i] || 0, y = pb[i] || 0;
+    if (x > y) return 1;
+    if (x < y) return -1;
+  }
+  return 0;
+}
+
+async function checkForAppUpdate() {
+  const card = document.getElementById('updCard');
+  const title = document.getElementById('updTitle');
+  const body = document.getElementById('updBody');
+  const acts = document.getElementById('updActions');
+  const btn = document.getElementById('btnCheckUpd');
+  if (card) card.classList.remove('hide');
+  if (title) title.textContent = 'Checking for update...';
+  if (body) body.textContent = 'Current version: v' + APP_VERSION;
+  if (acts) acts.innerHTML = '';
+  if (btn) { btn.disabled = true; btn.textContent = 'Checking...'; }
+
+  try {
+    if (!UPDATE_INFO_URL || UPDATE_INFO_URL.includes('YOUR_USER')) {
+      throw new Error('Set UPDATE_INFO_URL in the app code to your version.json link.');
+    }
+    const sep = UPDATE_INFO_URL.includes('?') ? '&' : '?';
+    const res = await fetch(UPDATE_INFO_URL + sep + 't=' + Date.now(), { cache: 'no-store' });
+    if (!res.ok) throw new Error('Could not reach update file (' + res.status + ')');
+    const info = await res.json();
+    const latestVer = String(info.version || '').trim();
+    if (!latestVer) throw new Error('Invalid version.json format.');
+
+    if (compareVer(latestVer, APP_VERSION) > 0) {
+      if (title) title.textContent = 'New Update Available: v' + latestVer;
+      if (body) body.innerHTML = 'You have <b>v' + APP_VERSION + '</b>. Latest is <b>v' + latestVer + '</b>.' + (info.notes ? '<br>' + String(info.notes).replace(/</g,'&lt;') : '');
+      if (acts && info.apkUrl) {
+        acts.innerHTML = '<a class="btn sm" style="display:inline-block;text-decoration:none" href="' + String(info.apkUrl).replace(/"/g,'&quot;') + '" target="_blank" rel="noopener">Download / Open Update</a>';
+      }
+    } else {
+      if (title) title.textContent = 'App is up to date';
+      if (body) body.textContent = 'You are already using the latest version (v' + APP_VERSION + ').';
+    }
+  } catch (err) {
+    if (title) title.textContent = 'Update check note';
+    if (body) body.textContent = err.message || String(err);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Check for Update'; }
+  }
+}
 
 function showMsg(txt, type='ok') {
   const b = document.getElementById('msgBox');
@@ -213,6 +276,7 @@ async function fetchServerState() {
   stateData.stf = (data.keys.stf && data.keys.stf.v) || [];
   stateData.prodUsers = (data.keys.prodUsers && data.keys.prodUsers.v) || {};
   stateData.prodLogs = (data.keys.prodLogs && data.keys.prodLogs.v) || [];
+  stateData.prodRecipes = (data.keys.prodRecipes && data.keys.prodRecipes.v) || [];
   stateData.prodUsersRev = (data.keys.prodUsers && data.keys.prodUsers.rev) || 0;
   stateData.prodLogsRev = (data.keys.prodLogs && data.keys.prodLogs.rev) || 0;
 }
@@ -259,23 +323,98 @@ function logout() {
 function addRow(containerId, name='', qty='', unit='pcs') {
   const div = document.createElement('div');
   div.className = 'item-row';
-  const listAttr = containerId === 'rawList' ? 'list="rawMaterialsDatalist"' : '';
-  const placeholder = containerId === 'rawList' ? 'Maida, Sugar, Oil...' : 'Item name';
-  div.innerHTML = `
-    <input type="text" ${listAttr} placeholder="${placeholder}" value="${name.replace(/"/g,'&quot;')}" class="i-name">
-    <input type="number" step="any" min="0" placeholder="Qty" value="${qty}" class="i-qty">
-    <select class="i-unit">
-      <option value="pcs" ${unit==='pcs'?'selected':''}>pcs</option>
-      <option value="kg" ${unit==='kg'?'selected':''}>kg</option>
-      <option value="g" ${unit==='g'?'selected':''}>g</option>
-      <option value="L" ${unit==='L'?'selected':''}>L</option>
-      <option value="ml" ${unit==='ml'?'selected':''}>ml</option>
-      <option value="pkt" ${unit==='pkt'?'selected':''}>pkt</option>
-      <option value="box" ${unit==='box'?'selected':''}>box</option>
-    </select>
-    <button type="button" class="btn danger" onclick="this.parentElement.remove()">×</button>
-  `;
+  if (containerId === 'prodList') {
+    const outItems = getAvailableOutputItems();
+    const matchedInit = outItems.find(o => o.name.toLowerCase() === String(name || '').trim().toLowerCase());
+    const chosenVal = matchedInit ? matchedInit.name : (outItems[0] ? outItems[0].name : '');
+    const chosenUnit = matchedInit ? matchedInit.unit : (outItems[0] ? outItems[0].unit : unit);
+    const optionsHtml = outItems.length
+      ? outItems.map(o => `<option value="${o.name.replace(/"/g,'&quot;')}" ${o.name===chosenVal?'selected':''}>${o.name.replace(/</g,'&lt;')}</option>`).join('')
+      : `<option value="">No recipe items set in system</option>`;
+    div.innerHTML = `
+      <select class="i-name" onchange="const m=getAvailableOutputItems().find(x=>x.name===this.value);if(m){this.parentElement.querySelector('.i-unit').value=m.unit;}refreshStaffRecipePreview();">
+        ${optionsHtml}
+      </select>
+      <input type="number" step="any" min="0" placeholder="Qty" value="${qty}" class="i-qty" oninput="refreshStaffRecipePreview()">
+      <select class="i-unit">
+        <option value="pcs" ${chosenUnit==='pcs'?'selected':''}>pcs</option>
+        <option value="Kg" ${chosenUnit==='Kg'?'selected':''}>Kg</option>
+        <option value="kg" ${chosenUnit==='kg'?'selected':''}>kg</option>
+        <option value="g" ${chosenUnit==='g'?'selected':''}>g</option>
+        <option value="Ltr" ${chosenUnit==='Ltr'?'selected':''}>Ltr</option>
+        <option value="L" ${chosenUnit==='L'?'selected':''}>L</option>
+        <option value="ml" ${chosenUnit==='ml'?'selected':''}>ml</option>
+        <option value="pkt" ${chosenUnit==='pkt'?'selected':''}>pkt</option>
+        <option value="box" ${chosenUnit==='box'?'selected':''}>box</option>
+        <option value="tray" ${chosenUnit==='tray'?'selected':''}>tray</option>
+      </select>
+      <button type="button" class="btn danger" onclick="this.parentElement.remove();refreshStaffRecipePreview();">×</button>
+    `;
+  } else {
+    div.innerHTML = `
+      <input type="text" list="rawMaterialsDatalist" placeholder="Maida, Sugar, Oil..." value="${name.replace(/"/g,'&quot;')}" class="i-name">
+      <input type="number" step="any" min="0" placeholder="Qty" value="${qty}" class="i-qty">
+      <select class="i-unit">
+        <option value="pcs" ${unit==='pcs'?'selected':''}>pcs</option>
+        <option value="kg" ${unit==='kg'?'selected':''}>kg</option>
+        <option value="g" ${unit==='g'?'selected':''}>g</option>
+        <option value="L" ${unit==='L'?'selected':''}>L</option>
+        <option value="ml" ${unit==='ml'?'selected':''}>ml</option>
+        <option value="pkt" ${unit==='pkt'?'selected':''}>pkt</option>
+        <option value="box" ${unit==='box'?'selected':''}>box</option>
+      </select>
+      <button type="button" class="btn danger" onclick="this.parentElement.remove()">×</button>
+    `;
+  }
   document.getElementById(containerId).appendChild(div);
+}
+
+
+function getAvailableOutputItems(){
+  const recs = Array.isArray(stateData.prodRecipes) ? stateData.prodRecipes : [];
+  return recs.map(r => ({
+    name: String(r.outputName || '').trim(),
+    unit: r.unit || 'pcs',
+    ingredients: r.ingredients || []
+  })).filter(x => x.name);
+}
+
+function computeStaffAutoRaw(produced){
+  const recs = Array.isArray(stateData.prodRecipes) ? stateData.prodRecipes : [];
+  const map = new Map();
+  (produced || []).forEach(p => {
+    const pName = String(p.name || '').trim().toLowerCase();
+    const pQty = parseFloat(p.qty) || 0;
+    if(!pName || pQty <= 0) return;
+    const rec = recs.find(r => String(r.outputName || '').trim().toLowerCase() === pName);
+    if(!rec || !Array.isArray(rec.ingredients)) return;
+    rec.ingredients.forEach(ing => {
+      const iName = String(ing.name || '').trim();
+      const iUnit = String(ing.unit || 'Kg').trim();
+      const perUnit = parseFloat(ing.qtyPerUnit) || 0;
+      if(!iName || perUnit <= 0) return;
+      const key = iName.toLowerCase() + '||' + iUnit.toLowerCase();
+      const cur = map.get(key) || { name: iName, qty: 0, unit: iUnit };
+      cur.qty = Math.round((cur.qty + (pQty * perUnit)) * 1000) / 1000;
+      map.set(key, cur);
+    });
+  });
+  return [...map.values()];
+}
+
+function refreshStaffRecipePreview(){
+  const pv = document.getElementById('recipeCalcPreview');
+  if(!pv) return;
+  const rows = [...document.querySelectorAll('#prodList .item-row')].map(r => ({
+    name: r.querySelector('.i-name').value.trim(),
+    qty: parseFloat(r.querySelector('.i-qty').value) || 0
+  })).filter(x => x.name && x.qty > 0);
+  const autoRaw = computeStaffAutoRaw(rows);
+  if(!autoRaw.length){
+    pv.textContent = 'No matching recipe raw materials for current output entry.';
+    return;
+  }
+  pv.innerHTML = autoRaw.map(x => `<div>• <b>${x.name}</b>: <b>${x.qty} ${x.unit}</b></div>`).join('');
 }
 
 function readRows(containerId) {
@@ -298,24 +437,24 @@ function loadDateOrTemplate() {
 
   const prodEl = document.getElementById('prodList');
   const rawEl = document.getElementById('rawList');
-  prodEl.innerHTML = ''; rawEl.innerHTML = '';
+  prodEl.innerHTML = ''; if(rawEl) rawEl.innerHTML = '';
   document.getElementById('autoFillNote').classList.add('hide');
 
   const existing = myLogs.find(l => l.date === dt);
   if (existing) {
     (existing.produced || []).forEach(i => addRow('prodList', i.name, i.qty, i.unit));
-    (existing.rawUsed || []).forEach(i => addRow('rawList', i.name, i.qty, i.unit));
+    refreshStaffRecipePreview();
     document.getElementById('inNotes').value = existing.notes || '';
     showMsg('Loaded existing entry for ' + dt, 'ok');
   } else if (myLogs.length > 0) {
     const last = myLogs[0];
     (last.produced || []).forEach(i => addRow('prodList', i.name, i.qty, i.unit));
-    (last.rawUsed || []).forEach(i => addRow('rawList', i.name, i.qty, i.unit));
+    refreshStaffRecipePreview();
     document.getElementById('inNotes').value = '';
     document.getElementById('autoFillNote').classList.remove('hide');
   } else {
     addRow('prodList', '', '', 'pcs');
-    addRow('rawList', '', '', 'kg');
+    refreshStaffRecipePreview();
   }
 
   const hist = document.getElementById('historyList');
@@ -331,23 +470,37 @@ function loadDateOrTemplate() {
   }
 }
 
-async function submitProduction() {
+const LS_PENDING = 'bo_staff_pending_queue';
+
+function getPendingQueue() {
+  try {
+    const q = JSON.parse(localStorage.getItem(LS_PENDING) || '[]');
+    return Array.isArray(q) ? q : [];
+  } catch (e) { return []; }
+}
+
+function setPendingQueue(arr) {
+  try { localStorage.setItem(LS_PENDING, JSON.stringify(arr || [])); } catch (e) {}
+  updateQueueUI();
+}
+
+function updateQueueUI() {
+  const q = getPendingQueue();
+  const box = document.getElementById('queueBox');
+  const cntEl = document.getElementById('queueCount');
+  if (cntEl) cntEl.textContent = String(q.length);
+  if (box) box.classList.toggle('hide', q.length === 0);
+}
+
+function buildCurrentRecord(existingId) {
   const dt = document.getElementById('inDate').value;
   const produced = readRows('prodList');
-  const rawUsed = readRows('rawList');
+  const rawUsed = computeStaffAutoRaw(produced);
   const notes = document.getElementById('inNotes').value.trim();
-
-  if (!dt) return showMsg('Select a date', 'bad');
-  if (!produced.length && !rawUsed.length) return showMsg('Enter at least one produced item or raw material.', 'bad');
-
-  const btn = document.getElementById('btnSubmit');
-  btn.disabled = true; btn.textContent = 'Saving...';
-
-  try {
-    await fetchServerState();
-    const existingIdx = stateData.prodLogs.findIndex(l => l.stfId === currentUser.stfId && l.date === dt);
-    const record = {
-      id: existingIdx >= 0 ? stateData.prodLogs[existingIdx].id : ('pr_' + Date.now().toString(36)),
+  return {
+    dt, produced, rawUsed, notes,
+    record: {
+      id: existingId || ('pr_' + Date.now().toString(36)),
       stfId: currentUser.stfId,
       staffCode: currentUser.staffCode,
       staffName: currentUser.name,
@@ -358,7 +511,70 @@ async function submitProduction() {
       rawUsed,
       notes,
       updatedAt: new Date().toISOString()
-    };
+    }
+  };
+}
+
+function saveToLocalQueueOnly() {
+  const dt = document.getElementById('inDate').value;
+  const produced = readRows('prodList');
+  if (!dt) return showMsg('Select a date', 'bad');
+  if (!produced.length) return showMsg('Enter at least one produced item and quantity.', 'bad');
+  const { record } = buildCurrentRecord();
+  const q = getPendingQueue().filter(x => !(x.stfId === currentUser.stfId && x.date === dt));
+  q.push(record);
+  setPendingQueue(q);
+  showMsg('Saved in app queue (not sent to server yet). Tap Upload to Server when ready.', 'ok');
+}
+
+async function flushPendingQueueToServer() {
+  const q = getPendingQueue();
+  if (!q.length) return showMsg('No pending entries in queue.', 'ok');
+  const btn = document.getElementById('btnUploadQueue');
+  if (btn) { btn.disabled = true; btn.textContent = 'Uploading...'; }
+  try {
+    await fetchServerState();
+    for (const rec of q) {
+      const idx = stateData.prodLogs.findIndex(l => l.stfId === rec.stfId && l.date === rec.date);
+      if (idx >= 0) stateData.prodLogs[idx] = { ...rec, id: stateData.prodLogs[idx].id };
+      else stateData.prodLogs.push(rec);
+    }
+    const res = await fetch(SERVER_URL + '/api/state', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Access-Key': ACCESS_KEY },
+      body: JSON.stringify({
+        changes: {
+          prodLogs: { v: stateData.prodLogs, base: stateData.prodLogsRev || 0 }
+        }
+      })
+    });
+    if (!res.ok) throw new Error('Server upload failed (' + res.status + ')');
+    setPendingQueue([]);
+    showMsg('All queued entries uploaded to server!', 'ok');
+    updateQueueUI();
+  loadDateOrTemplate();
+  } catch (err) {
+    showMsg('Upload pending: ' + (err.message || err), 'bad');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Upload Queue to Server'; }
+  }
+}
+
+async function submitProduction() {
+  const dt = document.getElementById('inDate').value;
+  const produced = readRows('prodList');
+  const notes = document.getElementById('inNotes').value.trim();
+
+  if (!dt) return showMsg('Select a date', 'bad');
+  if (!produced.length) return showMsg('Enter at least one produced item and quantity.', 'bad');
+
+  const btn = document.getElementById('btnSubmit');
+  btn.disabled = true; btn.textContent = 'Saving...';
+
+  try {
+    await fetchServerState();
+    const existingIdx = stateData.prodLogs.findIndex(l => l.stfId === currentUser.stfId && l.date === dt);
+    const { record } = buildCurrentRecord(existingIdx >= 0 ? stateData.prodLogs[existingIdx].id : '');
 
     if (existingIdx >= 0) stateData.prodLogs[existingIdx] = record;
     else stateData.prodLogs.push(record);
@@ -373,10 +589,15 @@ async function submitProduction() {
       })
     });
     if (!res.ok) throw new Error('Failed to save (' + res.status + ')');
-    showMsg('Production saved successfully!', 'ok');
+    showMsg('Production saved & synced!', 'ok');
     loadDateOrTemplate();
   } catch (err) {
-    showMsg(err.message, 'bad');
+    // If server/Railway is temporarily unreachable or rate-limited, save safely in local queue so no data is lost
+    const { record } = buildCurrentRecord();
+    const q = getPendingQueue().filter(x => !(x.stfId === currentUser.stfId && x.date === dt));
+    q.push(record);
+    setPendingQueue(q);
+    showMsg('Server busy/offline — saved in local queue. Tap Upload Queue when ready.', 'bad');
   } finally {
     btn.disabled = false; btn.textContent = "Submit Today's Production";
   }
@@ -394,6 +615,7 @@ async function openApp() {
 }
 
 (async function init() {
+  const vLbl = document.getElementById('lblAppVer'); if (vLbl) vLbl.textContent = APP_VERSION;
   const saved = localStorage.getItem(LS_SESS);
   if (saved) {
     try {
