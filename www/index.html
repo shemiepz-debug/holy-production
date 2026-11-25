@@ -326,11 +326,11 @@ function addRow(containerId, name='', qty='', unit='pcs') {
   if (containerId === 'prodList') {
     const outItems = getAvailableOutputItems();
     const matchedInit = outItems.find(o => o.name.toLowerCase() === String(name || '').trim().toLowerCase());
-    const chosenVal = matchedInit ? matchedInit.name : (outItems[0] ? outItems[0].name : '');
-    const chosenUnit = matchedInit ? matchedInit.unit : (outItems[0] ? outItems[0].unit : unit);
+    const chosenVal = matchedInit ? matchedInit.name : '';
+    const chosenUnit = matchedInit ? matchedInit.unit : unit;
     const optionsHtml = outItems.length
-      ? outItems.map(o => `<option value="${o.name.replace(/"/g,'&quot;')}" ${o.name===chosenVal?'selected':''}>${o.name.replace(/</g,'&lt;')}</option>`).join('')
-      : `<option value="">No recipe items set in system</option>`;
+      ? `<option value="" ${!chosenVal?'selected':''}>Select Item</option>` + outItems.map(o => `<option value="${o.name.replace(/"/g,'&quot;')}" ${o.name===chosenVal?'selected':''}>${o.name.replace(/</g,'&lt;')}</option>`).join('')
+      : `<option value="" selected>Select Item</option>`;
     div.innerHTML = `
       <select class="i-name" onchange="const m=getAvailableOutputItems().find(x=>x.name===this.value);if(m){this.parentElement.querySelector('.i-unit').value=m.unit;}refreshStaffRecipePreview();">
         ${optionsHtml}
@@ -620,6 +620,7 @@ async function openApp() {
   document.getElementById('lblStaffMeta').textContent = currentUser.branch + ' · ID: ' + currentUser.staffCode;
   document.getElementById('inSection').value = currentUser.section || 'Snacks';
   document.getElementById('inDate').value = new Date().toISOString().slice(0, 10);
+  updateQueueUI();
   loadDateOrTemplate();
 }
 
