@@ -372,7 +372,16 @@ function addRow(containerId, name='', qty='', unit='pcs') {
 
 function getAvailableOutputItems(){
   const recs = Array.isArray(stateData.prodRecipes) ? stateData.prodRecipes : [];
-  return recs.map(r => ({
+  const uId = currentUser && currentUser.stfId ? String(currentUser.stfId) : '';
+  const uName = currentUser && currentUser.name ? String(currentUser.name).trim().toLowerCase() : '';
+  return recs.filter(r => {
+    const rMakerId = String(r.makerId || '').trim();
+    const rMakerName = String(r.makerName || '').trim().toLowerCase();
+    if(!rMakerId && !rMakerName) return true;
+    if(uId && rMakerId && uId === rMakerId) return true;
+    if(uName && rMakerName && uName === rMakerName) return true;
+    return false;
+  }).map(r => ({
     name: String(r.outputName || '').trim(),
     unit: r.unit || 'pcs',
     ingredients: r.ingredients || []
